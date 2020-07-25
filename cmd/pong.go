@@ -170,9 +170,62 @@ func (g *Game) LeftPaddleDown() bool {
 	return false
 }
 
+func (g *Game) RightPaddleUp() bool {
+	if g.RightPaddle.Y < 0 {
+		return false
+	}
+
+	if ebiten.IsKeyPressed(ebiten.KeyUp) {
+		return true
+	}
+
+	for _, touchID := range ebiten.TouchIDs() {
+		x, y := ebiten.TouchPosition(touchID)
+		if x > int(g.WindowWidth/2) {
+			if y < int(g.RightPaddle.Y+g.RightPaddle.H/2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (g *Game) RightPaddleDown() bool {
+	if g.RightPaddle.Y+g.RightPaddle.H > g.WindowHeight {
+		return false
+	}
+
+	if ebiten.IsKeyPressed(ebiten.KeyDown) {
+		return true
+	}
+
+	for _, touchID := range ebiten.TouchIDs() {
+		x, y := ebiten.TouchPosition(touchID)
+		if x > int(g.WindowWidth/2) {
+			if y > int(g.RightPaddle.Y+g.RightPaddle.H/2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func keyPressStartGame() bool {
+	keys := []ebiten.Key{ebiten.KeySpace, ebiten.KeyW, ebiten.KeyS, ebiten.KeyUp, ebiten.KeyDown, ebiten.KeyEnter}
+	for _, key := range keys {
+		if ebiten.IsKeyPressed(key) {
+			return true
+		}
+	}
+	if len(ebiten.TouchIDs()) > 0 {
+		return true
+	}
+	return false
+}
+
 func (g *Game) Update(screen *ebiten.Image) error {
 	if g.GameMode == gameModeWait {
-		if ebiten.IsKeyPressed(ebiten.KeySpace) {
+		if keyPressStartGame() {
 			g.startGame()
 		}
 		return nil
@@ -184,12 +237,13 @@ func (g *Game) Update(screen *ebiten.Image) error {
 	if g.LeftPaddleDown() {
 		g.LeftPaddle.Y += int32(Abs(g.BallVelocity.Y))
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyUp) && g.RightPaddle.Y > 0 {
-		g.RightPaddle.Y += -g.WindowHeight / 60
+	if g.RightPaddleUp() {
+		g.RightPaddle.Y += -int32(Abs(g.BallVelocity.Y))
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyDown) && g.RightPaddle.Y+g.RightPaddle.H < g.WindowHeight {
-		g.RightPaddle.Y += g.WindowHeight / 60
+	if g.RightPaddleDown() {
+		g.RightPaddle.Y += int32(Abs(g.BallVelocity.Y))
 	}
+
 	if g.Ball.X+g.Ball.Radius > g.WindowWidth && g.BallVelocity.X > 0 {
 		g.Score.Y += 1
 		g.GameMode = gameModeWait
@@ -261,7 +315,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		score := fmt.Sprintf("%+v - %+v", int(g.Score.X), int(g.Score.Y))
 		x, y := g.centerText(score, arcadeFont)
 		text.Draw(screen, score, arcadeFont, x, y, color.White)
-		startMessage := "Press Space to Start"
+		startMessage := "Press to Start"
 		x, y = g.centerText(startMessage, smallArcadeFont)
 		text.Draw(screen, startMessage, smallArcadeFont, x, y+20, color.White)
 	case gameModePlay:

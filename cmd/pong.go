@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 
 	"image/color"
 	_ "image/jpeg"
@@ -11,8 +12,8 @@ import (
 	"github.com/fabianvf/pong/pkg/future"
 	"github.com/golang/freetype/truetype"
 	"github.com/hajimehoshi/ebiten"
-	"github.com/hajimehoshi/ebiten/ebitenutil"
 	"github.com/hajimehoshi/ebiten/examples/resources/fonts"
+	"github.com/hajimehoshi/ebiten/inpututil"
 	"github.com/hajimehoshi/ebiten/text"
 	"golang.org/x/image/font"
 
@@ -32,6 +33,7 @@ const (
 	rightPaddle   = "right"
 	gameModeWait  = 0
 	gameModePlay  = 1
+	gameModePause = 2
 	fontSize      = 32
 	smallFontSize = fontSize / 2
 	// backgroundURL = "https://cutewallpaper.org/21/black-cool-background/77+-Cool-Black-Background-Designs-on-WallpaperSafari.jpg"
@@ -98,29 +100,35 @@ type Game struct {
 	WindowHeight          int32
 	WindowWidth           int32
 	BallVelocityIncrement float64
-	// MaxBallVelocity       float64
+	MaxBallVelocity       float64
+	MinBallVelocity       float64
+	PaddleSpeed           int32
+	BallSpeed             float64
 }
 
 func (g *Game) Reset() {
 	g.Ball.X = int32(g.WindowWidth / 2)
 	g.Ball.Y = int32(g.WindowHeight / 2)
-	g.Ball.Radius = int32(1 * float64(g.WindowWidth) / 60)
-	g.BallVelocity.X = float64(g.WindowWidth) / 100
-	g.BallVelocity.Y = float64(g.WindowHeight) / 100
+	g.Ball.Radius = int32(float64(g.WindowWidth) / 60)
+	g.BallSpeed = float64(g.WindowWidth) / 100
 
-	g.BallVelocityIncrement = g.BallVelocity.X * 1.1
-	// g.MaxBallVelocity = g.BallVelocity.X * 2
+	g.BallVelocity.X = g.BallSpeed
+	g.BallVelocity.Y = g.BallSpeed
+
+	g.BallVelocityIncrement = g.BallSpeed / 10
+	g.MaxBallVelocity = g.BallSpeed * 3
+	g.MinBallVelocity = g.BallSpeed
 
 	g.LeftPaddle.X = int32(g.WindowWidth / 16)
 	g.LeftPaddle.Y = int32(g.WindowHeight / 2)
-	g.LeftPaddle.W = 10
+	g.LeftPaddle.W = int32(float64(g.WindowWidth) / 60)
 	g.LeftPaddle.H = int32(float64(g.WindowHeight) / 5)
 
 	g.RightPaddle.X = int32(g.WindowWidth - g.WindowWidth/16)
 	g.RightPaddle.Y = int32(g.WindowHeight / 2)
-	g.RightPaddle.W = 10
+	g.RightPaddle.W = int32(float64(g.WindowWidth) / 60)
 	g.RightPaddle.H = int32(float64(g.WindowHeight) / 5)
-
+	g.PaddleSpeed = int32(float64(g.WindowHeight) / 60)
 }
 
 func Abs(x float64) float64 {
@@ -213,17 +221,26 @@ func (g *Game) RightPaddleDown() bool {
 func keyPressStartGame() bool {
 	keys := []ebiten.Key{ebiten.KeySpace, ebiten.KeyW, ebiten.KeyS, ebiten.KeyUp, ebiten.KeyDown, ebiten.KeyEnter}
 	for _, key := range keys {
-		if ebiten.IsKeyPressed(key) {
+		if inpututil.IsKeyJustPressed(key) {
 			return true
 		}
 	}
-	if len(ebiten.TouchIDs()) > 0 {
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return true
+	}
+	if len(inpututil.JustPressedTouchIDs()) > 0 {
 		return true
 	}
 	return false
 }
 
 func (g *Game) Update(screen *ebiten.Image) error {
+	if g.GameMode == gameModePause {
+		if keyPressStartGame() {
+			g.GameMode = gameModePlay
+		}
+		return nil
+	}
 	if g.GameMode == gameModeWait {
 		if keyPressStartGame() {
 			g.startGame()
@@ -231,17 +248,22 @@ func (g *Game) Update(screen *ebiten.Image) error {
 		return nil
 
 	}
+	if ebiten.IsKeyPressed(ebiten.KeyEscape) {
+		g.GameMode = gameModePause
+		return nil
+	}
+
 	if g.LeftPaddleUp() {
-		g.LeftPaddle.Y += -int32(Abs(g.BallVelocity.Y))
+		g.LeftPaddle.Y += -g.PaddleSpeed
 	}
 	if g.LeftPaddleDown() {
-		g.LeftPaddle.Y += int32(Abs(g.BallVelocity.Y))
+		g.LeftPaddle.Y += g.PaddleSpeed
 	}
 	if g.RightPaddleUp() {
-		g.RightPaddle.Y += -int32(Abs(g.BallVelocity.Y))
+		g.RightPaddle.Y += -g.PaddleSpeed
 	}
 	if g.RightPaddleDown() {
-		g.RightPaddle.Y += int32(Abs(g.BallVelocity.Y))
+		g.RightPaddle.Y += g.PaddleSpeed
 	}
 
 	if g.Ball.X+g.Ball.Radius > g.WindowWidth && g.BallVelocity.X > 0 {
@@ -252,10 +274,7 @@ func (g *Game) Update(screen *ebiten.Image) error {
 		g.Score.X += 1
 		g.GameMode = gameModeWait
 	}
-	if g.BallHitPaddle() {
-		g.BallVelocity.X = -g.BallVelocity.X * 1.01
-		g.BallVelocity.Y *= 1.01
-	}
+	g.HandleBallPaddleCollision()
 
 	if g.Ball.Y < 0 && g.BallVelocity.Y < 0 {
 		g.BallVelocity.Y = -g.BallVelocity.Y
@@ -272,22 +291,45 @@ func (g *Game) PaddleDimensions() (int, int) {
 	return int(g.WindowWidth / 100), int(g.WindowHeight / 5)
 }
 
-func (g *Game) BallHitPaddle() bool {
+func GetBounceVelocity(Paddle resolv.Rectangle, Ball resolv.Circle, maxSpeed float64) (float64, float64) {
+	relativeIntersect := float64(Paddle.Y) + (float64(Paddle.H) / 2) - (float64(Ball.Y) + float64(Ball.Radius)/2)
+	normalizedRelativeIntersect := (relativeIntersect / (float64(Paddle.H) / 2))
+	angle := normalizedRelativeIntersect * math.Pi / 4
+	return Abs(math.Cos(angle)) * maxSpeed * Abs(angle), -math.Sin(angle) * maxSpeed * Abs(angle)
+}
 
-	oldW := g.LeftPaddle.W
-	g.LeftPaddle.W = 0
+func (g *Game) HandleBallPaddleCollision() {
+	oldX := g.LeftPaddle.X
+	g.LeftPaddle.X -= g.LeftPaddle.W
 	resolution := resolv.Resolve(&g.Ball, &g.LeftPaddle, int32(g.BallVelocity.X), int32(g.BallVelocity.Y))
-	g.LeftPaddle.W = oldW
-	if resolution.Colliding() {
-		// fmt.Printf("%+v\n", resolution)
-		return true
+	g.LeftPaddle.X = oldX
+
+	if resolution.Colliding() && g.BallVelocity.X < 0 {
+		g.BallSpeed += g.BallVelocityIncrement
+		vx, vy := GetBounceVelocity(g.LeftPaddle, g.Ball, g.MaxBallVelocity)
+		g.BallVelocity.X = vx
+		g.BallVelocity.Y = vy
 	}
+
+	oldX = g.RightPaddle.X
+	g.RightPaddle.X += g.RightPaddle.W
 	resolution = resolv.Resolve(&g.Ball, &g.RightPaddle, int32(g.BallVelocity.X), int32(g.BallVelocity.Y))
-	if resolution.Colliding() {
-		// fmt.Printf("%+v\n", resolution)
-		return true
+	g.RightPaddle.X = oldX
+
+	if resolution.Colliding() && g.BallVelocity.X > 0 {
+		g.BallSpeed += g.BallVelocityIncrement
+		vx, vy := GetBounceVelocity(g.RightPaddle, g.Ball, g.MaxBallVelocity)
+		g.BallVelocity.X = -(vx)
+		g.BallVelocity.Y = vy
 	}
-	return false
+
+	if Abs(g.BallVelocity.X) < g.MinBallVelocity {
+		multiplier := 1.0
+		if g.BallVelocity.X < 0 {
+			multiplier = -1
+		}
+		g.BallVelocity.X = g.MinBallVelocity * multiplier
+	}
 }
 
 func (g *Game) startGame() {
@@ -306,19 +348,27 @@ func (g *Game) centerText(content string, face font.Face) (int, int) {
 
 }
 
+func (g *Game) drawStart(screen *ebiten.Image) {
+	startMessage := "Press to Start"
+	x, y := g.centerText(startMessage, smallArcadeFont)
+	text.Draw(screen, startMessage, smallArcadeFont, x, y+20, color.Black)
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	// g.drawBackground(screen)
 	screen.Fill(color.RGBA{0x80, 0xa0, 0xc0, 0xff})
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("%+v", g))
+	// ebitenutil.DebugPrint(screen, fmt.Sprintf("%+v", g))
+	score := fmt.Sprintf("%+v - %+v", int(g.Score.X), int(g.Score.Y))
+	x, y := g.centerText(score, arcadeFont)
+	text.Draw(screen, score, arcadeFont, x, y, color.Black)
 	switch g.GameMode {
 	case gameModeWait:
-		score := fmt.Sprintf("%+v - %+v", int(g.Score.X), int(g.Score.Y))
-		x, y := g.centerText(score, arcadeFont)
-		text.Draw(screen, score, arcadeFont, x, y, color.White)
-		startMessage := "Press to Start"
-		x, y = g.centerText(startMessage, smallArcadeFont)
-		text.Draw(screen, startMessage, smallArcadeFont, x, y+20, color.White)
+		g.drawStart(screen)
 	case gameModePlay:
+		g.drawPaddles(screen)
+		g.drawBall(screen)
+	case gameModePause:
+		g.drawStart(screen)
 		g.drawPaddles(screen)
 		g.drawBall(screen)
 	}
@@ -364,8 +414,6 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 }
 
 func main() {
-	fmt.Println("HELLO")
-	// ebiten.SetWindowSize(1080, 720)
 	ebiten.SetWindowResizable(true)
 	ebiten.SetWindowTitle("Pong, but shitty")
 	if err := ebiten.RunGame(NewGame()); err != nil {

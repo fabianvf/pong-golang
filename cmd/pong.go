@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"image"
 	"math"
 	"os"
 	"os/signal"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/fabianvf/pong-golang/pkg/future"
 	raudio "github.com/fabianvf/pong-golang/pkg/resources/audio"
+	rimage "github.com/fabianvf/pong-golang/pkg/resources/images"
 )
 
 var (
@@ -57,6 +60,15 @@ const (
 
 func init() {
 	var err error
+	img, _, err := image.Decode(bytes.NewReader(rimage.Background_png))
+	if err != nil {
+		log.Fatal(err)
+	}
+	backgroundImage, err = ebiten.NewImageFromImage(img, ebiten.FilterDefault)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	paddleImage, err = ebiten.NewImage(1, 1, ebiten.FilterDefault)
 	if err != nil {
 		log.Fatal(err)
@@ -65,10 +77,6 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// backgroundImage, err = ebitenutil.NewImageFromURL(backgroundURL)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
 
 	tt, err := truetype.Parse(fonts.ArcadeN_ttf)
 	if err != nil {
@@ -96,6 +104,14 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	hitAudio, err := mp3.Decode(audioContext, audio.BytesReadSeekCloser(raudio.Hit_mp3))
+	if err != nil {
+		log.Fatal(err)
+	}
+	hitPlayer, err = audio.NewPlayer(audioContext, hitAudio)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 type Pair struct {
@@ -114,7 +130,7 @@ type TrailElement struct {
 func (t *TrailElement) Draw(screen *ebiten.Image, options *ebiten.DrawImageOptions) {
 	y := t.Coord.Y
 	options.GeoM.Reset()
-	options.GeoM.Scale(t.Radius, t.Radius*t.Speed)
+	options.GeoM.Scale(t.Radius, t.Radius+t.Speed)
 	options.GeoM.Rotate(t.Angle)
 	y += t.Radius / 2
 	if t.Velocity.X < 0 {
@@ -152,10 +168,7 @@ func (t *Trail) Add(b *Ball) {
 		[]TrailElement{newElement},
 		t.elements[:len(t.elements)-1]...)
 	for i, _ := range t.elements {
-		// fi := float64(i + 1)
 		t.elements[i].Radius = t.elements[i].Radius * 0.9
-		// t.elements[i].Velocity.X = t.elements[i].Velocity.X * 1 / fi
-		// t.elements[i].Velocity.Y = t.elements[i].Velocity.Y * 1 / fi
 	}
 }
 
@@ -426,6 +439,8 @@ func (g *Game) HandleBallPaddleCollision() {
 		vx, vy := GetBounceVelocity(&g.LeftPaddle, g.Ball.BoundingBox(), g.Ball.VelocityBounds.Y)
 		g.Ball.Velocity.X = vx
 		g.Ball.Velocity.Y = vy
+		hitPlayer.Rewind()
+		hitPlayer.Play()
 	}
 
 	oldX = g.RightPaddle.X
@@ -434,10 +449,11 @@ func (g *Game) HandleBallPaddleCollision() {
 	g.RightPaddle.X = oldX
 
 	if resolution.Colliding() && g.Ball.Velocity.X > 0 {
-		// g.Ball.BaseSpeed += g.Ball.VelocityIncrement
 		vx, vy := GetBounceVelocity(&g.RightPaddle, g.Ball.BoundingBox(), g.Ball.VelocityBounds.Y)
 		g.Ball.Velocity.X = -(vx)
 		g.Ball.Velocity.Y = vy
+		hitPlayer.Rewind()
+		hitPlayer.Play()
 	}
 
 	if Abs(g.Ball.Velocity.X) < g.Ball.VelocityBounds.X {
@@ -472,8 +488,7 @@ func (g *Game) drawStart(screen *ebiten.Image) {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	// g.drawBackground(screen)
-	screen.Fill(color.RGBA{0x80, 0xa0, 0xc0, 0xff})
+	g.drawBackground(screen)
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("FPS: %+v, TPS: %+v", ebiten.CurrentFPS(), ebiten.CurrentTPS()))
 	score := fmt.Sprintf("%+v - %+v", int(g.Score.X), int(g.Score.Y))
 	x, y := g.centerText(score, arcadeFont)
@@ -491,11 +506,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 }
 
-// func (g *Game) drawBackground(screen *ebiten.Image) {
-// 	backgroundOpts := ebiten.DrawImageOptions{}
-// 	// backgroundOpts.GeoM.Scale(float64(g.WindowWidth), float64(g.WindowHeight))
-// 	screen.DrawImage(backgroundImage, &backgroundOpts)
-// }
+func (g *Game) drawBackground(screen *ebiten.Image) {
+	backgroundOpts := ebiten.DrawImageOptions{}
+	w, h := backgroundImage.Size()
+	backgroundOpts.GeoM.Scale(float64(g.WindowWidth)/float64(w), float64(g.WindowHeight)/float64(h))
+	screen.DrawImage(backgroundImage, &backgroundOpts)
+}
 
 func (g *Game) drawPaddles(screen *ebiten.Image) {
 	paddleImage.Fill(color.White)

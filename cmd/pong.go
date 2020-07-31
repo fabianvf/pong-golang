@@ -128,15 +128,10 @@ type TrailElement struct {
 }
 
 func (t *TrailElement) Draw(screen *ebiten.Image, options *ebiten.DrawImageOptions) {
-	y := t.Coord.Y
 	options.GeoM.Reset()
 	options.GeoM.Scale(t.Radius, t.Radius+t.Speed)
 	options.GeoM.Rotate(t.Angle)
-	y += t.Radius / 2
-	if t.Velocity.X < 0 {
-		y += t.Radius
-	}
-	options.GeoM.Translate(t.Coord.X, y)
+	options.GeoM.Translate(t.Coord.X, t.Coord.Y)
 
 	screen.DrawImage(ballImage, options)
 }
@@ -147,7 +142,8 @@ func NewTrail() Trail {
 }
 
 type Trail struct {
-	elements []TrailElement
+	elements     []TrailElement
+	currentAngle float64
 }
 
 func (t *Trail) Draw(screen *ebiten.Image, options *ebiten.DrawImageOptions) {
@@ -156,13 +152,21 @@ func (t *Trail) Draw(screen *ebiten.Image, options *ebiten.DrawImageOptions) {
 	}
 }
 
+func (t *Trail) UpdateAngle(velocity Pair) {
+	t.currentAngle = math.Atan2(velocity.Y, velocity.X) - (3*math.Pi)/2
+}
+
 func (t *Trail) Add(b *Ball) {
 	newElement := TrailElement{
 		Radius:   float64(b.Radius) * 0.5,
 		Coord:    b.Coord,
 		Velocity: b.Velocity,
-		Angle:    math.Atan2(b.Velocity.Y, b.Velocity.X) - (3*math.Pi)/2,
+		Angle:    t.currentAngle,
 		Speed:    math.Sqrt(math.Pow(b.Velocity.Y, 2) + math.Pow(b.Velocity.X, 2)),
+	}
+	newElement.Coord.Y += newElement.Radius / 2
+	if newElement.Velocity.X < 0 {
+		newElement.Coord.Y += newElement.Radius
 	}
 	t.elements = append(
 		[]TrailElement{newElement},
@@ -257,6 +261,7 @@ func (g *Game) Reset() {
 	g.RightPaddle.W = int32(float64(g.WindowWidth) / 60)
 	g.RightPaddle.H = int32(float64(g.WindowHeight) / 5)
 	g.PaddleSpeed = int32(float64(g.WindowHeight) / 60)
+	g.Ball.trail.UpdateAngle(g.Ball.Velocity)
 }
 
 func Abs(x float64) float64 {
@@ -408,9 +413,11 @@ func (g *Game) Update(screen *ebiten.Image) error {
 
 	if g.Ball.Coord.Y < 0 && g.Ball.Velocity.Y < 0 {
 		g.Ball.Velocity.Y = -g.Ball.Velocity.Y
+		g.Ball.trail.UpdateAngle(g.Ball.Velocity)
 	}
 	if int32(g.Ball.Coord.Y)+g.Ball.Radius > g.WindowHeight && g.Ball.Velocity.Y > 0 {
 		g.Ball.Velocity.Y = -g.Ball.Velocity.Y
+		g.Ball.trail.UpdateAngle(g.Ball.Velocity)
 	}
 	g.Ball.Coord.X += g.Ball.Velocity.X
 	g.Ball.Coord.Y += g.Ball.Velocity.Y
@@ -441,6 +448,7 @@ func (g *Game) HandleBallPaddleCollision() {
 		g.Ball.Velocity.Y = vy
 		hitPlayer.Rewind()
 		hitPlayer.Play()
+		g.Ball.trail.UpdateAngle(g.Ball.Velocity)
 	}
 
 	oldX = g.RightPaddle.X
@@ -454,6 +462,7 @@ func (g *Game) HandleBallPaddleCollision() {
 		g.Ball.Velocity.Y = vy
 		hitPlayer.Rewind()
 		hitPlayer.Play()
+		g.Ball.trail.UpdateAngle(g.Ball.Velocity)
 	}
 
 	if Abs(g.Ball.Velocity.X) < g.Ball.VelocityBounds.X {
